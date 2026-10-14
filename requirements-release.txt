@@ -1,0 +1,7 @@
+# Release builds use a clean environment with these versions.
+PySide6==6.12.0
+Pillow==12.3.0
+numpy==2.2.6
+certifi==2025.11.12
+PyInstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8
