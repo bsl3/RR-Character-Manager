@@ -1599,7 +1599,6 @@ class MainWindow(QMainWindow):
         about=bar.addMenu('&Help')
         self.action(about,'About / Supported Formats',self.about)
         self.action(about,'Check for Updates…',lambda:self.check_updates(True))
-        self.action(about,'Configure Updates…',self.configure_updates)
         self.action(about,'Deployment Profile…',self.configure_deployment)
         self.action(about,'Export Compatibility Report…',self.export_compatibility_report)
 
@@ -1620,28 +1619,10 @@ class MainWindow(QMainWindow):
             self.pack.deployment_profile=choices[value]
             QSettings('Retro Rewind','Character Manager').setValue('deployment/profile',choices[value])
 
-    def configure_updates(self):
-        from .updates import DEFAULT_REPOSITORY,repository
-        settings=QSettings('Retro Rewind','Character Manager')
-        value,ok=QInputDialog.getText(self,'GitHub Releases','Repository URL (leave empty to disable):',text=settings.value('updates/repository',DEFAULT_REPOSITORY))
-        if not ok:return
-        try:repository(value)
-        except ValueError as error:QMessageBox.warning(self,'Invalid repository',str(error));return
-        settings.setValue('updates/repository',value.strip());settings.remove('updates/lastCheck')
-
     def check_updates(self,manual=False):
-        import time
         from .updates import DEFAULT_REPOSITORY
-        settings=QSettings('Retro Rewind','Character Manager');repo=settings.value('updates/repository',DEFAULT_REPOSITORY)
-        if not repo:
-            if manual:QMessageBox.information(self,'Updates','Configure a GitHub repository under Help → Configure Updates first.')
-            return
         if self._update_worker is not None and self._update_worker.isRunning():return
-        try:last=float(settings.value('updates/lastCheck',0))
-        except (ValueError,TypeError):last=0
-        if not manual and time.time()-last<86400:return
-        settings.setValue('updates/lastCheck',time.time())
-        worker=UpdateWorker(repo,self);self._update_worker=worker
+        worker=UpdateWorker(DEFAULT_REPOSITORY,self);self._update_worker=worker
         worker.result.connect(lambda release,error:self.update_result(release,error,manual))
         worker.start()
 

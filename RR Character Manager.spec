@@ -16,12 +16,10 @@ excludes = [
     'PySide6.QtDesigner', 'PySide6.QtTest', 'PyQt5', 'PyQt6', 'PySide2',
     'tkinter', 'PIL.AvifImagePlugin', 'PIL._avif', 'PIL.ImageTk',
 ]
-config = root / 'build/release-config.json'
-extra_data = [(str(config), '.')] if config.exists() else []
 a = Analysis(
     [str(root / 'main.py')], pathex=[str(root)], binaries=[],
     datas=[(str(root / 'assets/base_icons'), 'assets/base_icons'),
-           (str(root / 'full-motorcycle-helmet.png'), '.')] + extra_data,
+           (str(root / 'full-motorcycle-helmet.png'), '.')],
     hiddenimports=[], hookspath=[str(root / 'tools/pyinstaller-hooks')], hooksconfig={}, runtime_hooks=[],
     excludes=excludes, noarchive=False, optimize=1,
 )

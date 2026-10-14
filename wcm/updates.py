@@ -8,13 +8,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-DEFAULT_REPOSITORY = ''  # Source-run default; release builds embed their repository.
-if getattr(sys, 'frozen', False):
-    from pathlib import Path
-    try:
-        DEFAULT_REPOSITORY = json.loads((Path(sys._MEIPASS) / 'release-config.json').read_text(encoding='utf-8')).get('repository', '')
-    except (OSError, ValueError):
-        pass
+DEFAULT_REPOSITORY = 'https://github.com/bsl3/RR-Character-Manager'
 
 
 def repository(value):

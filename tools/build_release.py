@@ -15,7 +15,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from wcm import __version__
-from wcm.updates import platform_key, repository
+from wcm.updates import platform_key
 
 
 def build_command(root=ROOT):
@@ -46,15 +46,16 @@ def check_dependencies():
             raise RuntimeError('Install requirements-release.txt in a clean environment first.')
 
 
-def package(output, target):
+def package(output, target, binary=None):
     tag = 'RRCharacterManager-v' + __version__ + '-' + target
     name = 'RR character manager ' + __version__
-    if sys.platform == 'win32':
-        binary = ROOT/'dist'/(name+'.exe')
-    elif sys.platform == 'darwin':
-        binary = ROOT/'dist/RR Character Manager.app'
-    else:
-        binary = ROOT/'dist'/name
+    if binary is None:
+        if sys.platform == 'win32':
+            binary = ROOT/'dist'/(name+'.exe')
+        elif sys.platform == 'darwin':
+            binary = ROOT/'dist/RR Character Manager.app'
+        else:
+            binary = ROOT/'dist'/name
     if not binary.exists():
         raise FileNotFoundError(binary)
     with tempfile.TemporaryDirectory(prefix='rrcm-package-') as temporary:
@@ -64,7 +65,8 @@ def package(output, target):
         else:
             shutil.copy2(binary, staging/binary.name)
         shutil.copy2(ROOT/'README.md', staging/'README.md')
-        shutil.copy2(ROOT/'THIRD_PARTY_NOTICES.md', staging/'THIRD_PARTY_NOTICES.md')
+        for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
+            if (ROOT/name).is_file():shutil.copy2(ROOT/name, staging/name)
         shutil.copytree(ROOT/'THIRD_PARTY_NOTICES', staging/'THIRD_PARTY_NOTICES')
         if sys.platform == 'darwin':
             artifact = output/(tag+'.zip')
@@ -91,7 +93,6 @@ def package(output, target):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',type=Path,default=ROOT/'release')
-    parser.add_argument('--repository',default=os.environ.get('RRCM_RELEASE_REPOSITORY',''))
     parser.add_argument('--package-only',action='store_true')
     args = parser.parse_args(argv)
     target = platform_key()
@@ -100,9 +101,7 @@ def main(argv=None):
     if not args.package_only:
         check_dependencies()
         subprocess.run([sys.executable, str(ROOT/'tools/collect_runtime_notices.py')], check=True)
-        repo = 'https://github.com/'+repository(args.repository) if args.repository else ''
         build = ROOT/'build';build.mkdir(exist_ok=True)
-        (build/'release-config.json').write_text(json.dumps({'repository':repo}),encoding='utf-8')
         if sys.platform == 'darwin':
             from PIL import Image
             with Image.open(ROOT/'full-motorcycle-helmet.png') as icon:icon.save(build/'release-icon.icns',format='ICNS')
