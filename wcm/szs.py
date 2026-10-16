@@ -4,7 +4,7 @@ This is deliberately narrow: files are parsed, validated, and rebuilt without
 interpreting their payloads. Never modifies game assets implicitly.
 """
 from __future__ import annotations
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from pathlib import Path
 import struct
@@ -70,17 +70,22 @@ def yaz0_encode(data: bytes) -> bytes:
     out = bytearray(b'Yaz0' + struct.pack('>I', len(data)) + bytes(8))
     n = len(data)
     # Hash points to previous occurrences, retaining a small shortlist per key.
-    seen: dict[bytes, list[int]] = {}
+    seen: dict[bytes, deque[int]] = {}
     at = 0
 
     def insert(pos: int) -> None:
         if pos + 3 > n:
             return
+        expired = pos - 4096
+        if expired >= 0:
+            old_key = data[expired:expired + 3]
+            old = seen.get(old_key)
+            if old and old[0] == expired:
+                old.popleft()
+                if not old:
+                    del seen[old_key]
         key = data[pos:pos + 3]
-        choices = seen.setdefault(key, [])
-        choices.append(pos)
-        if len(choices) > 24:
-            del choices[:len(choices) - 24]
+        seen.setdefault(key, deque(maxlen=24)).append(pos)
 
     while at < n:
         flag_at = len(out)

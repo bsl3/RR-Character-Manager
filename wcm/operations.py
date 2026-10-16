@@ -41,9 +41,9 @@ class EditPlan:
             lines += [f'  {src.name}  â†’  {dst.name}' for src,dst in self.moves[:90]]
             if len(self.moves) > 90: lines.append(f'  â€¦ plus {len(self.moves)-90} additional moves')
         if self.replace_existing:
-            lines += ['', 'Files being replaced (backed up first):', *('  '+str(p) for p in sorted(self.replace_existing))]
+            lines += ['', 'Files being replaced:', *('  '+str(p) for p in sorted(self.replace_existing))]
         if self.deletes:
-            lines += ['', 'Files removed after backup:', *('  '+str(p) for p in sorted(self.deletes))]
+            lines += ['', 'Files being removed:', *('  '+str(p) for p in sorted(self.deletes))]
         if self.writes:
             lines += ['', 'File updates:']
             lines += [f'  {p.name} ({len(contents):,} bytes)' for p,contents in list(self.writes.items())[:50]]
@@ -180,7 +180,7 @@ class CharacterPack:
         meta.update(json.loads(self._skin_metadata(code, slot, name, author)))
         return (json.dumps(meta, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
 
-    def __init__(self, character_folder: Path, replaced_assets: Path, patches_folder: Path | None = None, *, developer_mode: bool = False, deployment_profile: str = "rr"):
+    def __init__(self, character_folder: Path, replaced_assets: Path, patches_folder: Path | None = None, *, developer_mode: bool = False, deployment_profile: str = "rr", backup_root: Path | None = None):
         self.developer_mode = bool(developer_mode)
         self.deployment_profile=deployment_profile
         if deployment_profile not in ("rr","wiiloaded","direct"):raise ValueError("Invalid deployment profile")
@@ -198,6 +198,8 @@ class CharacterPack:
             raise ValueError('ReplacedAssets.szs does not exist')
         if self.archive_path.name.lower() != 'replacedassets.szs':
             raise ValueError('Select ReplacedAssets.szs, not UIAssets.szs or RaceAssets.szs')
+        from .backups import default_root,validate_root
+        self.backup_root=validate_root(backup_root or default_root(),self.character.parent,self.patches_path,self.archive_path.parent)
         self.reload()
 
     def reload(self):
@@ -241,6 +243,7 @@ class CharacterPack:
         self.distribution_inventory = scan_paths(paths.values(), self.base_bmg)
         self._patch_slot_index = None
         self.patch_assets: dict[str, Path] = {}
+        self.rr_icon_sources = {}
         self.patch_directories: dict[tuple[str, int], Path] = {}
         if self.patches_path.is_dir():
             for p in self.patches_path.rglob('*'):
@@ -262,9 +265,23 @@ class CharacterPack:
                     self.patch_directories[key] = p.parent
                     continue
                 asset = parse_asset(p.name, source_import=True)
+                if asset is None and p.suffix.lower()=='.png':
+                    candidate=parse_asset(p.stem+'.tpl',source_import=True)
+                    if candidate and candidate.category in ('Portrait','Map') and candidate.slot in self.distribution_slots(candidate.code):asset=candidate
                 if asset is None or asset.slot is None:
                     continue
                 rel = asset.destination(asset.slot)
+                rr_icon=(asset.category in ('Portrait','Map') and asset.slot in self.distribution_slots(asset.code))
+                if rr_icon:
+                    try:
+                        self.rr_icon_bytes(p,asset.category)
+                    except (OSError,ValueError):continue
+                    self.rr_icon_sources.setdefault(rel.casefold(),[]).append(p)
+                    candidates=self.rr_icon_sources[rel.casefold()]
+                    candidates.sort(key=lambda q:(q.parent!=self.patches_path/'RRIcons',q.relative_to(self.patches_path).as_posix().casefold()))
+                    paths[rel.casefold()]=rel
+                    self.patch_assets[rel.casefold()]=candidates[0]
+                    continue
                 if rel.casefold() in self.patch_assets:
                     raise ValueError(f'Multiple Patches files provide {rel}: '
                                      f'{self.patch_assets[rel.casefold()]} and {p}')
@@ -275,10 +292,21 @@ class CharacterPack:
             if not target.is_relative_to(self.patches_path):
                 raise ValueError('Resource index points outside Patches/')
             if target.is_file():
-                if logical.casefold() in self.patch_assets:
-                    raise ValueError(f'Conflicting mapped Patches asset: {logical}')
-                paths[logical.casefold()] = logical
-                self.patch_assets[logical.casefold()] = target
+                asset=self._indexed_asset(logical)
+                rr_icon=asset and asset.category in ('Portrait','Map') and asset.slot in self.distribution_slots(asset.code)
+                if rr_icon:
+                    try:self.rr_icon_bytes(target,asset.category)
+                    except (OSError,ValueError):continue
+                    candidates=self.rr_icon_sources.setdefault(logical.casefold(),[])
+                    if target not in candidates:candidates.append(target)
+                    candidates.sort(key=lambda q:(q.parent!=self.patches_path/'RRIcons',q.relative_to(self.patches_path).as_posix().casefold()))
+                    paths[logical.casefold()]=logical
+                    self.patch_assets[logical.casefold()]=candidates[0]
+                else:
+                    if logical.casefold() in self.patch_assets:
+                        raise ValueError(f'Conflicting mapped Patches asset: {logical}')
+                    paths[logical.casefold()] = logical
+                    self.patch_assets[logical.casefold()] = target
         # Ignore any metadata referring to skins that are no longer installed.
         self.patch_directories = {key: folder for key, folder in self.patch_directories.items()
                                   if f'Driver/{key[0]}-{key[1]}.brres'.casefold() in self.patch_assets}
@@ -411,6 +439,60 @@ class CharacterPack:
     def can_edit_skin(self, code: str, slot: int) -> bool:
         return self.developer_mode or self.is_patch_skin(code, slot)
 
+    @staticmethod
+    def rr_icon_bytes(path,kind='Portrait'):
+        from .tpl import read_tpl,image_to_tpl
+        size=64 if kind=='Portrait' else 32
+        if path.suffix.lower()=='.png':
+            from PIL import Image
+            with Image.open(path) as image:
+                if max(image.size)>4096:raise ValueError('Icon PNG is too large')
+                return image_to_tpl(image.convert('RGBA'),size)
+        raw=path.read_bytes()
+        if read_tpl(raw).size!=(size,size):raise ValueError(f'RR {kind} icons must be {size}x{size}')
+        return raw
+
+    def can_replace_portrait(self,code,slot):
+        return self.can_edit_skin(code,slot) or self.is_rr_skin(code,slot)
+
+    def is_rr_skin(self,code,slot):
+        return slot in self.distribution_slots(code) and not self.is_patch_skin(code,slot)
+
+    def organize_rr_icons(self):
+        plan=EditPlan('Organize existing RR skin icons')
+        plan.names_synchronized=True
+        index={kind:dict(entries) for kind,entries in self.resource_index.items()}
+        occupied=set()
+        def retain(source,folder,suffix):
+            raw=source.read_bytes();digest=hashlib.sha256(raw).hexdigest()[:16]
+            dest=self.patches_path/'RRIcons'/folder/(source.name+'.'+digest+suffix)
+            if dest in occupied or dest.exists() and dest.read_bytes()==raw:plan.deletes.add(source)
+            else:plan.moves.append((source,dest));occupied.add(dest)
+        for logical,sources in self.rr_icon_sources.items():
+            asset=self._indexed_asset(logical)
+            if not self.is_rr_skin(asset.code,asset.slot):continue
+            filename=f'{asset.code}-{asset.slot}-css.tpl' if asset.category=='Portrait' else f'{asset.code}-{asset.slot}.tpl'
+            target=self.patches_path/'RRIcons'/filename
+            chosen=sources[0];content=self.rr_icon_bytes(chosen,asset.category)
+            for key in index['patches']:
+                if key.casefold()==logical:index['patches'][key]=target.relative_to(self.patches_path).as_posix()
+            if chosen!=target:
+                if target.exists() and target not in sources:retain(target,'Conflicts','.inactive')
+                if chosen.suffix.lower()=='.png':
+                    plan.writes[target]=content
+                    if target.exists():plan.replace_existing.add(target)
+                    retain(chosen,'Sources','.source')
+                else:plan.moves.append((chosen,target))
+            for source in sources[1:]:
+                if source.suffix.lower()=='.png':retain(source,'Sources','.source')
+                elif self.rr_icon_bytes(source,asset.category)==content:
+                    if source!=target:plan.deletes.add(source)
+                else:retain(source,'Conflicts','.inactive')
+        if index!=self.resource_index:self._stage_resource_index(plan,index)
+        for path in {p for pair in plan.moves for p in pair} | set(plan.deletes) | set(plan.writes):
+            plan.expected[path]=hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        return plan
+
     def _distribution_name_archives(self):
         """Only supported UI/Race siblings of the selected ReplacedAssets."""
         paths=[]
@@ -541,7 +623,7 @@ class CharacterPack:
 
     def _stage_name_patches(self, plan: EditPlan, bmg: CharacterBMG) -> None:
         # The new folder is the canonical location. Any legacy root pair is
-        # removed in the same backed-up transaction as the updated BMG write.
+        # removed in the same transaction as the updated BMG write.
         plan.expected.update(self._snapshot)
         plan.names_synchronized = True
         plan.warnings.extend('Text conflict resolved: ' + c for c in self.text_conflicts)
@@ -684,7 +766,7 @@ class CharacterPack:
             for mid in changed_ids - patch_ids:
                 before = names._lookup(mid);after = ids.get(mid)
                 if before and after and (before.raw,before.metadata) != (after.raw,after.metadata):
-                    plan.warnings.append(f'Synchronize name/author 0x{mid:08x}: {names.get_text(mid)!r} → {original.get_text(mid)!r}; original is backed up')
+                    plan.warnings.append(f'Synchronize name/author 0x{mid:08x}: {names.get_text(mid)!r} → {original.get_text(mid)!r}; use Backup Patches to preserve the original')
             names.messages = [m for m in names.messages if m.id not in changed_ids - patch_ids]
             names.messages.extend(Message(m.id,m.raw,m.metadata) for m in ids.values() if m.id not in patch_ids)
             names.dirty = True
@@ -830,7 +912,7 @@ class CharacterPack:
         return plan
 
     def delete_resource(self, code: str, slot: int, logical: str) -> EditPlan:
-        """Delete exactly one selected resource, with backup and mapping cleanup."""
+        """Delete one selected resource and clean up its mapping."""
         skin = self.inventory.skins.get((code, slot))
         if skin is None:
             raise ValueError('Select an installed character')
@@ -855,11 +937,11 @@ class CharacterPack:
             index[scope].pop(logical)
             self._stage_resource_index(plan, index)
         plan.warnings.append('This resource will be removed from the character installation. '
-                             'A restorable backup is created first; removing a Driver can hide the entire slot.')
+                             'Use Backup Patches before deleting if needed; removing a Driver can hide the entire slot.')
         return plan
 
     def delete_characters(self, characters) -> EditPlan:
-        """Remove selected installations through the existing backup/text transaction."""
+        """Remove selected installations in a single transaction."""
         keys = set(characters)
         if not keys:
             raise ValueError('Select an installed character')
@@ -952,7 +1034,7 @@ class CharacterPack:
         if keys-removed_distribution and not (removed_distribution and self._active_name_override()):
             self._stage_name_patches(plan,merged)
         plan.warnings.append('Selected installation files and name/author entries will be removed. '
-                             'Shared archives and unrelated files are retained; a backup is created before deletion.')
+                             'Shared archives and unrelated files are retained; use Backup Patches before deletion if needed.')
         return plan
 
     def organize_existing_patches(self) -> EditPlan:
@@ -1340,22 +1422,13 @@ class CharacterPack:
                     package_selection_entries = package.preview_entries()
                 else:
                     raise ValueError('Selected model is not a package resource')
-        elif source.is_dir():
-            for p in source.rglob('*'):
-                if p.is_file():
-                    entries.append((p.relative_to(source).as_posix(), p.read_bytes()))
-        elif source.suffix.lower() == '.zip':
-            with zipfile.ZipFile(source) as z:
-                if len(z.infolist()) > 10000 or sum(i.file_size for i in z.infolist()) > 1024*1024*1024:
-                    raise ValueError('Import archive contains too many files or exceeds 1 GiB unpacked')
-                for i in z.infolist():
-                    if i.is_dir():
-                        continue
-                    if i.file_size > 128 * 1024 * 1024:
-                        raise ValueError('A single imported file exceeds 128 MiB')
-                    entries.append((i.filename,z.read(i)))
         else:
-            entries.append((source.name,source.read_bytes()))
+            from .models import source_entries
+            entries = source_entries(source)
+        from .library import unused_race_variant
+        skipped_variants = [rel for rel, _ in entries if unused_race_variant(rel)]
+        entries = [(rel, data) for rel, data in entries if not unused_race_variant(rel)]
+        package_sources = [(rel, data) for rel, data in package_sources if not unused_race_variant(rel)]
         all_entries = entries
         variants = available_import_variants(rel for rel, _ in entries)
         entries = select_import_entries(entries, source_variant)
@@ -1516,6 +1589,8 @@ class CharacterPack:
                                  'may require additional game-side support; inspect the bind pose and test menus in-game.')
         if package is None and len(component_codes) > 1:
             plan.metadata.append('Importing '+code.upper()+' component only; other base-character resources are preserved as source data. No skeletons are renamed or retargeted.')
+        if skipped_variants:
+            plan.metadata.append(f'Skipped {len(skipped_variants)} unused team/battle and split-screen vehicle archives; original source unchanged.')
         if preserved_choices:
             plan.metadata.append(f'{len(preserved_choices)} unselected overlay/component or identical duplicate resources preserved as source data.')
         registered = set()
@@ -1647,6 +1722,7 @@ class CharacterPack:
             if count<12:plan.warnings.append(f'Only {count}/12 distinct normal-mode vehicles supplied; team colors and split-screen copies do not increase coverage. Unsupported vehicles use native fallback.')
         else:plan.warnings.append('No race vehicle archives supplied; native vehicle fallback will be used.')
         missing=missing_race_requests(code,coverage)
+        missing={'normal':missing['normal']}
         plan.character_metadata['missing_vehicle_requests']=missing
         for mode,requests in missing.items():
             if requests:
@@ -1717,12 +1793,13 @@ class CharacterPack:
         return plan
 
     def replace_image(self, code: str, slot: int, source: Path, kind: str) -> EditPlan:
-        """Replace/create a CSS portrait or minimap image with a backed-up edit."""
+        """Replace or create a CSS portrait or minimap image."""
         if kind not in ('Portrait','Map'):
             raise ValueError('Unsupported image type')
         if (code,slot) not in self.inventory.skins:
             raise ValueError('Select an installed skin before replacing its icon')
-        if not self.can_edit_skin(code, slot):
+        rr_icon=not self.developer_mode and self.is_rr_skin(code,slot)
+        if not self.can_edit_skin(code, slot) and not rr_icon:
             self._require_developer('Editing distribution portraits or minimaps')
         source = Path(source).expanduser().resolve()
         if not source.is_file():
@@ -1745,16 +1822,39 @@ class CharacterPack:
         folder = self.patch_directories.get((code, slot), self.patches_path)
         destination = (folder / filename if self.is_patch_skin(code, slot)
                        else self.character / kind / filename)
+        if rr_icon:destination=self.patches_path/'RRIcons'/filename
         canonical_rel = f'{kind}/{filename}'
-        if canonical_rel.casefold() in self.patch_assets or canonical_rel.casefold() in self.distribution_assets:
+        if not rr_icon and (canonical_rel.casefold() in self.patch_assets or canonical_rel.casefold() in self.distribution_assets):
             destination = self.asset_path(canonical_rel)
         if destination.exists() and destination.read_bytes() == content:
             return EditPlan('Image already up to date')
         plan = EditPlan(f'Replace {kind} for {code.upper()} slot {slot}')
+        if rr_icon:plan.names_synchronized=True
         plan.writes[destination] = content
+        plan.expected[destination]=hashlib.sha256(destination.read_bytes()).hexdigest() if destination.is_file() else None
         if destination.exists():
             plan.replace_existing.add(destination)
         plan.metadata.append(f'{kind} <- {source.name} ({size} x {size} RGB5A3)')
+        return plan
+
+    def can_revert_rr_icon(self, code, slot, kind):
+        filename=f'{code}-{slot}-css.tpl' if kind=='Portrait' else f'{code}-{slot}.tpl'
+        return self.is_rr_skin(code,slot) and bool(self.rr_icon_sources.get(f'{kind}/{filename}'.casefold()))
+
+    def revert_rr_icon(self, code, slot, kind):
+        if kind not in ('Portrait','Map') or not self.is_rr_skin(code,slot):
+            raise ValueError('Select a base RR skin icon to revert')
+        filename=f'{code}-{slot}-css.tpl' if kind=='Portrait' else f'{code}-{slot}.tpl'
+        logical=f'{kind}/{filename}'.casefold()
+        plan=EditPlan(f'Revert {kind} for {code.upper()} slot {slot}')
+        plan.names_synchronized=True
+        for path in self.rr_icon_sources.get(logical,[]):
+            plan.deletes.add(path)
+            plan.expected[path]=hashlib.sha256(path.read_bytes()).hexdigest()
+        index={key:dict(entries) for key,entries in self.resource_index.items()}
+        for key in list(index['patches']):
+            if key.casefold()==logical:del index['patches'][key]
+        if index!=self.resource_index:self._stage_resource_index(plan,index)
         return plan
 
     def replace_portrait(self, code: str, slot: int, source: Path) -> EditPlan:
@@ -1767,7 +1867,7 @@ class CharacterPack:
         """Validate/update a newly committed import without scanning old resources.
 
         Complex edits retain full reload. A batch performs one final full scan;
-        failed commits still restore backups and reload the complete library.
+        failed commits still roll back and reload the complete library.
         """
         if (plan.moves or plan.deletes or self._resource_index_path() in plan.writes or
                 key in self.inventory.skins or any(
@@ -1883,16 +1983,8 @@ class CharacterPack:
             if path in writes and path.exists() and path != self.archive_path and str(path).casefold() not in source_keys and path not in replace_existing:
                 raise ValueError(f'Cannot overwrite an existing asset: {path}')
         touched = set(sources) | set(outputs) | deletes
-        backups_root = self.character.parent / 'RR Character Manager Backups'
-        backups_root.mkdir(parents=True,exist_ok=True)
-        token = datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
-        backup = backups_root / token
-        backup.mkdir()
-        backup_files = backup / 'files'
-        backup_files.mkdir()
         backup_map: dict[Path, Path] = {}
-        temp_parent = self.character.parent
-        with tempfile.TemporaryDirectory(prefix='.rrcm-stage-',dir=temp_parent) as temp:
+        with tempfile.TemporaryDirectory(prefix='.rrcm-stage-') as temp:
             stage = Path(temp)
             staged: list[tuple[Path,Path]] = []
             for i,(src,dst) in enumerate(moves):
@@ -1903,9 +1995,10 @@ class CharacterPack:
                 staged_path = stage / f'write-{i:05d}'
                 staged_path.write_bytes(blob)
                 staged.append((staged_path,dst))
+            rollback=stage/'rollback';rollback.mkdir()
             for i,path in enumerate(sorted(touched,key=str)):
                 if path.exists():
-                    target = backup_files / f'{i:05d}'
+                    target = rollback / str(i)
                     shutil.copy2(path,target)
                     backup_map[path] = target
             report = {
@@ -1916,27 +2009,20 @@ class CharacterPack:
                 'deletes': [str(s) for s in sorted(deletes)],
                 'warnings':plan.warnings,
             }
-            (backup/'manifest.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+            (stage/'transaction.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
             try:
                 for src in sources + sorted(deletes):
                     src.unlink()
                 for staged_path,dst in staged:
                     dst.parent.mkdir(parents=True,exist_ok=True)
-                    # Filesystem may differ for the BMG archive; os.replace is
-                    # only used within the asset volume. Archive uses same-dir temp.
-                    if dst == self.archive_path or dst in self.distribution_text_paths:
-                        with tempfile.NamedTemporaryFile(dir=dst.parent,prefix='.rrcm-',suffix='.szs',delete=False) as f:
-                            tmp_path = Path(f.name)
-                            with staged_path.open('rb') as stream:
-                                shutil.copyfileobj(stream,f)
-                        try:
-                            os.replace(tmp_path,dst)
-                        finally:
-                            tmp_path.unlink(missing_ok=True)
-                    else:
-                        os.replace(staged_path,dst)
+                    # Replace on the destination volume, even with external staging.
+                    with tempfile.NamedTemporaryFile(dir=dst.parent,prefix='.rrcm-',delete=False) as f:
+                        tmp_path=Path(f.name)
+                        with staged_path.open('rb') as stream:shutil.copyfileobj(stream,f)
+                    try:os.replace(tmp_path,dst)
+                    finally:tmp_path.unlink(missing_ok=True)
                 # Validate the installed archive and its file inventory while
-                # backups remain available for a full rollback.
+                # temporary copies remain available for rollback.
                 if imported_character is None:
                     self.reload()
                 else:
@@ -1959,4 +2045,4 @@ class CharacterPack:
                 except OSError:
                     break
                 parent = parent.parent
-        return backup
+        return None

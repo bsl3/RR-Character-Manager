@@ -281,6 +281,30 @@ class VoiceSession:
     def __init__(self,pack,code,slot,baseline):
         self.pack=pack;self.code=code;self.slot=slot;self.archive=VoiceArchive(baseline,code)
         if (code,slot) not in pack.inventory.skins:raise ValueError('Character no longer exists')
+        # A filename alias selects the event layout, not the owning character slot.
+        from .library import CHARACTER_CODES, CHARACTER_NAMES
+        aliases = {code: code for code in CHARACTER_CODES}
+        aliases.update({name.upper().replace(' ', '_').replace('.', '').casefold(): code
+                        for name, code in zip(CHARACTER_NAMES, CHARACTER_CODES)})
+        borrowed = {}
+        for asset in pack.inventory.skins[code,slot].files:
+            if asset.category != 'Sound':
+                continue
+            match = re.fullmatch(r'GRP_VO_[A-Z]{2,3}-\d+_(.+\.(?:brwsd|brbnk))\.([\w-]+)',
+                                 Path(asset.relpath).name, re.I)
+            if match:
+                key = next((k for k in self.archive.banks if k.casefold() == match[1].casefold()), match[1])
+                source_code = aliases.get(match[2].casefold())
+                if source_code is None:
+                    continue  # Preserve legacy labels that do not name a vanilla behavior.
+                source_archive = borrowed.setdefault(source_code, None)
+                if source_archive is None:
+                    source_archive = borrowed[source_code] = VoiceArchive(baseline, source_code)
+                bank = next((bank for stem, bank in source_archive.banks.items()
+                             if stem.casefold() == match[1].casefold()), None)
+                if bank is None:
+                    raise ValueError('Borrowed voice behavior has no matching bank: ' + match[0])
+                self.archive.banks[key] = VoiceBank(bank.file_id, key, bank.resource, bank.labels, bank.writable)
         self.defaults={key:WaveResource(bank.resource) for key,bank in self.archive.banks.items()}
         self.current=dict(self.defaults);self.paths={};self.logicals={};self.errors={};self.pending={};self.missing=set()
         self.expected={};self.pending_sources={};self.pending_raw={}

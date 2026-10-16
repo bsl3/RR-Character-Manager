@@ -16,7 +16,7 @@ def masking_function():
 
 class TestReadOnlyPortrait(unittest.TestCase):
     def test_image_widget_remains_enabled_and_colored_in_standard_mode(self):
-        self.assertIn('self.portrait.setEditable(editable)', SOURCE)
+        self.assertIn('self.portrait.setEditable(portrait_editable)', SOURCE)
         self.assertIn('self.map_preview.setEditable(editable)', SOURCE)
         self.assertNotIn('self.portrait.setEnabled(editable)', SOURCE)
         self.assertNotIn('self.map_preview.setEnabled(editable)', SOURCE)
@@ -26,9 +26,9 @@ class TestReadOnlyPortrait(unittest.TestCase):
         self.assertNotIn('super().setEnabled(', preview_class)
 
     def test_edit_permission_still_guarded_for_clicks(self):
-        self.assertIn('if not self.pack.can_edit_skin(self.current_code, self.current_slot):', SOURCE)
+        self.assertIn('if not self.pack.can_replace_portrait(self.current_code, self.current_slot):', SOURCE)
         self.assertIn('self.save_button.setEnabled(editable)', SOURCE)
-        self.assertIn('self.portrait.setEditable(editable)', SOURCE)
+        self.assertIn('self.portrait.setEditable(portrait_editable)', SOURCE)
         self.assertIn('self.map_preview.setEditable(editable)', SOURCE)
 
 

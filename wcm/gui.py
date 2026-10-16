@@ -8,8 +8,8 @@ import tempfile
 import hashlib
 from pathlib import Path
 from collections import OrderedDict
-from PySide6.QtCore import Qt, QSettings, QSize, QTimer, Signal, QPointF, QThread, QEvent, QItemSelectionModel, QMimeData, QUrl, QRect
-from PySide6.QtGui import QAction, QColor, QFont, QImage, QPixmap, QKeySequence, QIcon, QIntValidator, QPainter, QPolygonF, QDrag, QDesktopServices, QCursor
+from PySide6.QtCore import Qt, QSettings, QSize, QTimer, Signal, QPointF, QThread, QEvent, QItemSelectionModel, QMimeData, QUrl, QRect, QFileSystemWatcher
+from PySide6.QtGui import QAction, QColor, QFont, QImage, QPixmap, QKeySequence, QIcon, QIntValidator, QPainter, QPen, QPolygonF, QDrag, QDesktopServices, QCursor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QLineEdit, QListWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QVBoxLayout, QHBoxLayout,
@@ -41,6 +41,7 @@ QMenuBar { background: #182436; padding: 4px 6px; border-bottom: 1px solid #2c3c
 QMenuBar::item:selected, QMenu::item:selected { background: #284665; }
 QMenu { background: #1b293b; border: 1px solid #36465a; padding: 5px; }
 QMenu::item { padding: 6px 26px; }
+QMenu::item:disabled { color: #738196; background: transparent; }
 QFrame#Header { background: #18283d; border-bottom: 1px solid #30455e; }
 QLabel#AppTitle { font-size: 18pt; font-weight: 700; color: #f1f5fc; background: transparent; }
 QLabel#AppSubtitle { color: #96abc3; font-size: 9pt; background: transparent; }
@@ -193,7 +194,8 @@ def button(title: str, action, primary: bool = False) -> QPushButton:
 
 
 class EditableImagePreview(QPushButton):
-    """Clickable image with a hover-only edit affordance."""
+    """Clickable image with hover-only edit and revert actions."""
+    revertRequested = Signal()
     def __init__(self, placeholder: str, parent=None):
         super().__init__(placeholder, parent)
         self.setObjectName('CSSPreview')
@@ -209,17 +211,47 @@ class EditableImagePreview(QPushButton):
         # Clicking through the badge activates the entire image, not a separate button.
         self._edit_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._edit_badge.hide()
+        self._revertible = False
+        self._revert_button = QPushButton(self)
+        self._revert_button.setFixedSize(27,27)
+        self._revert_button.setStyleSheet(
+            'QPushButton { background: #2475d0; border: none; border-radius: 7px; }'
+            'QToolTip { font-family: "Segoe UI"; font-size: 10pt; }'
+        )
+        arrow=QPixmap(40,40)
+        arrow.fill(Qt.GlobalColor.transparent)
+        painter=QPainter(arrow)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(Qt.GlobalColor.white,4,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
+        painter.drawArc(QRect(8,8,24,24),130*16,-285*16)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(Qt.GlobalColor.white)
+        painter.drawPolygon(QPolygonF([QPointF(5,8),QPointF(18,8),QPointF(5,21)]))
+        painter.end()
+        self._revert_button.setIcon(QIcon(arrow))
+        self._revert_button.setIconSize(QSize(20,20))
+        self._revert_button.setToolTip('Revert to original RR icon (or none)')
+        self._revert_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._revert_button.clicked.connect(self.revertRequested.emit)
+        self._revert_button.hide()
+
+    def setRevertible(self, enabled):
+        self._revertible=bool(enabled)
+        self._revert_button.setVisible(self._revertible and self.underMouse())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._edit_badge.move(self.width() - self._edit_badge.width() - 7, 7)
+        self._revert_button.move(self.width() - 65,7)
 
     def enterEvent(self, event):
         super().enterEvent(event)
         if self._editable:
             self._edit_badge.show()
+        if self._revertible:self._revert_button.show()
 
     def leaveEvent(self, event):
+        self._revert_button.hide()
         self._edit_badge.hide()
         super().leaveEvent(event)
 
@@ -347,11 +379,13 @@ class PatchSlotTable(QTableWidget):
     def dragMoveEvent(self,event):
         if event.source() is self and self._drag_slot is not None and event.mimeData().hasFormat('application/x-rrcm-slot'):
             event.setDropAction(Qt.DropAction.CopyAction);event.accept()
+        elif event.mimeData().hasUrls():self.window().dragEnterEvent(event)
         else:event.ignore()
 
     def dropEvent(self, event):
         if self._drag_slot is None or event.source() is not self:
-            event.ignore()
+            if event.mimeData().hasUrls():self.window().dropEvent(event)
+            else:event.ignore()
             return
         target_row = self.rowAt(event.position().toPoint().y())
         target = self.item(target_row, 0) if target_row >= 0 else None
@@ -359,7 +393,7 @@ class PatchSlotTable(QTableWidget):
         target_slot = target.data(Qt.ItemDataRole.UserRole) if target else -1
         event.setDropAction(Qt.DropAction.CopyAction)
         event.accept()
-        QTimer.singleShot(0,lambda:self.slotDropped.emit(source_slot,target_slot))
+        QTimer.singleShot(0,self,lambda:self.slotDropped.emit(source_slot,target_slot))
 
 
 class ConnectionProfileEditor(QWidget):
@@ -548,7 +582,7 @@ class MassImportProgress(QDialog):
         self.bar.setFormat('%v / %m packages (%p%)')
         layout.addWidget(self.bar)
         layout.addWidget(note('Please wait for the export results.' if self.exporting else
-            'Each installation creates a backup. Please wait for the results.'))
+            'Please wait for the installation results.'))
         self.worker = worker or MassImportWorker(pack, packages, self)
         self.worker.setParent(self)
         self.worker.progress.connect(self.update_progress)
@@ -905,6 +939,10 @@ class ModelExplorerDialog(QDialog):
         self._pending_model = None
         if self._model_future is not None:
             self._model_future.cancel()
+            self._model_future = None
+        self.viewport.dispose()
+        self.entries = []
+        self._preview_cache.clear()
 
     def update_selection(self):
         i = self.table.currentRow()
@@ -953,8 +991,9 @@ class ModelExplorerDialog(QDialog):
             self._model_future_key = self._pending_model
             row, selected = self._pending_model
             candidate = self.candidates[row]
+            entries = self.entries
             def load():
-                data = extract_model_bytes(self.entries, candidate)
+                data = extract_model_bytes(entries, candidate)
                 variants = list_models(data)
                 chosen = default_model(variants) if selected is None else selected
                 try:
@@ -1032,10 +1071,10 @@ class ImportWizard(QDialog):
         heading=QLabel('Import a custom skin')
         heading.setStyleSheet('font-size: 16pt; font-weight: 700;')
         shell.addWidget(heading)
-        shell.addWidget(note('Import a .mkchara character, mod ZIP, folder, or driver BRRES. The source must match its vanilla character skeleton.'))
+        shell.addWidget(note('Import a .mkpack collection, .mkchara character, mod ZIP, folder, or driver BRRES. The source must match its vanilla character skeleton.'))
         group=QGroupBox('Source assets');group_layout=QVBoxLayout(group)
         source_row=QHBoxLayout()
-        self.source=QLineEdit();self.source.setPlaceholderText('Select a .mkchara, ZIP, mod folder or .brres')
+        self.source=QLineEdit();self.source.setPlaceholderText('Select a .mkpack, .mkchara, ZIP, mod folder or .brres')
         source_row.addWidget(self.source,1)
         source_row.addWidget(button('File…',self.browse_file))
         source_row.addWidget(button('Folder…',self.browse_dir))
@@ -1124,7 +1163,7 @@ class ImportWizard(QDialog):
         shell.addWidget(optional)
         shell.addWidget(note('Standard Mode installs into empty Patches/ slots only. '
                              'Developer Mode can change distribution slots and BMG data. '
-                             'Every installation is previewed and backed up.'))
+                             'Every installation is previewed before applying.'))
         controls=QHBoxLayout();controls.addStretch();controls.addWidget(button('Cancel',self.reject))
         controls.addWidget(button('Review Installation',self.validate,True));outer.addLayout(controls)
         self.plan=None
@@ -1166,7 +1205,9 @@ class ImportWizard(QDialog):
             self._choosing_slot = False
 
     def browse_file(self):
-        path,_=QFileDialog.getOpenFileName(self,'Choose character assets',self.source.text(),'Character assets (*.mkchara *.zip *.brres *.szs);;Character packages (*.mkchara);;Mod assets (*.zip *.brres *.szs);;All files (*)')
+        path,_=QFileDialog.getOpenFileName(self,'Choose character assets',self.source.text(),'Character assets (*.mkpack *.mkchara *.zip *.brres *.szs);;Character packages (*.mkpack *.mkchara);;Mod assets (*.zip *.brres *.szs);;All files (*)')
+        if path and Path(path).suffix.lower()=='.mkpack':
+            self.pack_source=Path(path);self.reject();return
         if path:self.source.setText(path);self.probe()
 
     def browse_dir(self):
@@ -1180,6 +1221,8 @@ class ImportWizard(QDialog):
             self.refresh_icon_previews()
 
     def probe(self):
+        if Path(self.source.text()).suffix.lower()=='.mkpack':
+            self.pack_source=Path(self.source.text());self.reject();return
         self._icon_preview_entries = None
         self.show_package_icons()
         if not self.source.text().strip():
@@ -1209,6 +1252,8 @@ class ImportWizard(QDialog):
             elif path.suffix.lower()=='.zip':
                 with zipfile.ZipFile(path) as z:names=z.namelist()
             else:names=[path.name]
+            from .library import unused_race_variant
+            names = [name for name in names if not unused_race_variant(name)]
             variants = available_import_variants(names)
             old_variant = self.variant.currentData()
             self.variant.blockSignals(True)
@@ -1278,6 +1323,8 @@ class ImportWizard(QDialog):
             variant = self.variant.currentData() if not self.variant_box.isHidden() else None
             def read_models():
                 entries = source_entries(source)
+                from .library import unused_race_variant
+                entries = [(name, data) for name, data in entries if not unused_race_variant(name)]
                 return entries,discover_models(entries,source_variant=variant)
             entries,candidates = read_library_background(read_models,self,
                 title='Loading Models',message='Reading model resources…')
@@ -1371,14 +1418,16 @@ class ImportWizard(QDialog):
                 extra_images=extra, source_variant=self.variant.currentData() if not self.variant_box.isHidden() else None,
                 driver_candidate=self.driver_choice)
             source = Path(self.source.text())
-            if source.suffix.lower() == '.mkchara':
-                self.plan = package_import_plan(self.pack, source, self.base.currentData(), self.slot.value(),
-                    insert=self.mode.currentIndex()==0, **kwargs)
-            elif self.target.currentData() == 'patches':
-                self.plan = self.pack.import_patch_skin(source, self.base.currentData(), self.slot.value(), **kwargs)
-            else:
-                self.plan = self.pack.import_skin(source, self.base.currentData(), self.slot.value(),
-                    insert=self.mode.currentIndex()==0, **kwargs)
+            pack, code, slot = self.pack, self.base.currentData(), self.slot.value()
+            insert, target = self.mode.currentIndex()==0, self.target.currentData()
+            def prepare():
+                if source.suffix.lower() == '.mkchara':
+                    return package_import_plan(pack, source, code, slot, insert=insert, **kwargs)
+                if target == 'patches':
+                    return pack.import_patch_skin(source, code, slot, **kwargs)
+                return pack.import_skin(source, code, slot, insert=insert, **kwargs)
+            self.plan = read_library_background(prepare, self,
+                title='Preparing Character Import', message='Validating models, icons and voices…')
         except Exception as e:
             QMessageBox.warning(self,'Cannot import',str(e));return
         self.accept()
@@ -1393,7 +1442,7 @@ class PreviewDialog(QDialog):
         title=QLabel('Review changes before applying')
         title.setStyleSheet('font-size: 16pt; font-weight: 700;')
         layout.addWidget(title)
-        layout.addWidget(note('Nothing is written until you confirm. A dated backup is created before files are modified.'))
+        layout.addWidget(note('Nothing is written until you confirm. Use Backup Patches to save a manual backup before editing.'))
         self.text=QPlainTextEdit(plan.preview());self.text.setReadOnly(True)
         self.text.setFont(QFont('Consolas',9))
         layout.addWidget(self.text,1)
@@ -1481,7 +1530,7 @@ class ResourceEditorDialog(QDialog):
         layout.addWidget(note(status))
         warning = note('Warning: Retro Rewind expects specific filenames. Custom names may stop a model, icon, '
                        'vehicle, or sound from loading. The manager keeps renamed resources visible; '
-                       'every Save creates a restorable backup.')
+                       'use Backup Patches to create a restorable backup.')
         layout.addWidget(warning)
         controls = QHBoxLayout()
         self.revert_button = button('Revert to Default Filenames', self.revert_defaults)
@@ -1544,9 +1593,11 @@ class MainWindow(QMainWindow):
     def __init__(self,pack:CharacterPack):
         super().__init__()
         self.pack=pack
+        self.setAcceptDrops(True)
+        self.apply_backup_location()
         profile=QSettings("Retro Rewind","Character Manager").value("deployment/profile",pack.deployment_profile)
         self.pack.deployment_profile=profile if profile in ('rr','wiiloaded','direct') else 'rr' 
-        self.setWindowTitle(f'Retro Rewind Character Manager · v{__version__}')
+        self.setWindowTitle('Retro Rewind Character Manager')
         self.resize(1510,940)
         self.setMinimumSize(1130,690)
         self.current_code='bmr'
@@ -1570,7 +1621,14 @@ class MainWindow(QMainWindow):
         self.setup_content()
         self.reload_view(initial=True)
         self._update_worker=None
-        QTimer.singleShot(3000,lambda:self.check_updates(False))
+        self._installation_watcher=QFileSystemWatcher(self)
+        self._installation_watcher.directoryChanged.connect(self.schedule_installation_refresh)
+        self._installation_watcher.fileChanged.connect(self.schedule_installation_refresh)
+        self._external_refresh_timer=QTimer(self);self._external_refresh_timer.setSingleShot(True)
+        self._external_refresh_timer.timeout.connect(self.refresh_installation_changes)
+        self.organize_rr_icons()
+        self.watch_installation()
+        QTimer.singleShot(3000,self,lambda:self.check_updates(False))
 
     def action(self,menu,text,callback,shortcut=None):
         a=QAction(text,self)
@@ -1585,6 +1643,7 @@ class MainWindow(QMainWindow):
         self.action(file,'Open Character Pack…',self.open_pack,'Ctrl+O')
         self.action(file,'Refresh',self.refresh,'F5')
         self.action(file,'Set revo_kart.brsar…',self.set_voice_baseline)
+        self.action(file,'Export Patches for RR SD…',self.export_patches)
         file.addSeparator()
         self.action(file,'Exit',self.close,'Alt+F4')
         actions=bar.addMenu('&Characters')
@@ -1592,15 +1651,125 @@ class MainWindow(QMainWindow):
         self.action(actions,'Mass Import (.mkchara folder)…',self.mass_import)
         self.mass_export_action = self.action(actions,'Mass Export (.mkchara)…',self.mass_export)
         self.export_action = self.action(actions,'Export Character (.mkchara)…',self.export_character)
+        self.pack_export_action=self.action(actions,'Export as Character Pack (.mkpack)…',self.export_character_pack)
+        self.pack_export_action.setEnabled(False)
         self.export_action.setToolTip('Export the selected character’s saved metadata and installed resources')
         self.action(actions,'Sync Menu / Race Names…',self.synchronize_character_names)
         self.rename_base_action=self.action(actions,'Rename Vanilla Character…',self.rename_vanilla_character)
         self.move_action = self.action(actions,'Move Character to Slot…',self.move_character)
+        backups=bar.addMenu('&Backups')
+        self.action(backups,'Choose Backup Location…',self.choose_backup_location)
+        self.action(backups,'Browse Backups',self.browse_backups)
+        self.action(backups,'Restore Patches Backup…',self.restore_backup)
         about=bar.addMenu('&Help')
         self.action(about,'About / Supported Formats',self.about)
         self.action(about,'Check for Updates…',lambda:self.check_updates(True))
-        self.action(about,'Deployment Profile…',self.configure_deployment)
-        self.action(about,'Export Compatibility Report…',self.export_compatibility_report)
+
+    def dragEnterEvent(self,event):
+        urls=event.mimeData().urls()
+        if len(urls)==1 and urls[0].isLocalFile() and Path(urls[0].toLocalFile()).suffix.lower() in ('.mkpack','.mkchara'):
+            event.acceptProposedAction()
+        else:event.ignore()
+
+    def dropEvent(self,event):
+        urls=event.mimeData().urls()
+        if len(urls)!=1 or not urls[0].isLocalFile():event.ignore();return
+        path=Path(urls[0].toLocalFile())
+        if path.suffix.lower() not in ('.mkpack','.mkchara'):event.ignore();return
+        event.acceptProposedAction()
+        QTimer.singleShot(0,self,lambda:self.import_character(path))
+
+    def apply_backup_location(self):
+        from .backups import validate_root
+        saved=QSettings('Retro Rewind','Character Manager').value('backups/location','')
+        if saved:
+            try:self.pack.backup_root=validate_root(saved,self.pack.character.parent,self.pack.patches_path,self.pack.archive_path.parent)
+            except ValueError:
+                QTimer.singleShot(0,self,self.choose_backup_location)
+
+    def choose_backup_location(self):
+        folder=QFileDialog.getExistingDirectory(self,'Choose backups folder outside RR',str(self.pack.backup_root))
+        if not folder:return False
+        from .backups import validate_root
+        try:
+            root=validate_root(folder,self.pack.character.parent,self.pack.patches_path,self.pack.archive_path.parent)
+        except ValueError as error:
+            QMessageBox.warning(self,'Backup location',str(error));return False
+        self.pack.backup_root=root
+        QSettings('Retro Rewind','Character Manager').setValue('backups/location',str(root))
+        return True
+
+    def create_manual_backup(self):
+        settings=QSettings('Retro Rewind','Character Manager')
+        if not settings.value('backups/location','') and not self.choose_backup_location():return
+        from .backups import snapshot,validate_root
+        try:
+            root=validate_root(self.pack.backup_root,self.pack.character.parent,self.pack.patches_path,self.pack.archive_path.parent)
+            saved=read_library_background(lambda:snapshot(self.pack.patches_path,root,'Manual Patches backup'),self,
+                title='Backing Up Patches',message='Copying the complete Patches folder…')
+            QMessageBox.information(self,'Backup complete','Patches backup saved to:\n'+str(saved))
+        except Exception as error:QMessageBox.warning(self,'Backup failed',str(error))
+
+    def browse_backups(self):
+        self.pack.backup_root.mkdir(parents=True,exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.pack.backup_root)))
+
+    def restore_backup(self):
+        if self.has_staged_changes():
+            QMessageBox.information(self,'Unsaved changes','Save or revert staged edits before restoring.');return
+        from .backups import history,restore
+        choices=history(self.pack.backup_root)
+        if not choices:
+            QMessageBox.information(self,'Backups','No Patches backups found in the selected location.');return
+        labels=[p.name+' — '+d.get('description','') for p,d in choices]
+        label,ok=QInputDialog.getItem(self,'Restore Patches','Choose a complete Patches snapshot:',labels,0,False)
+        if not ok:return
+        if QMessageBox.question(self,'Restore Patches','Replace the entire Patches folder with this backup? Use Backup Patches first if you want to keep the current files. Other installation files stay unchanged.')!=QMessageBox.StandardButton.Yes:return
+        try:
+            read_library_background(lambda:restore(choices[labels.index(label)][0],self.pack.patches_path,self.pack.backup_root),self)
+            self.pack.reload();self.reload_view();self.watch_installation()
+        except Exception as error:QMessageBox.warning(self,'Cannot restore backup',str(error))
+
+    def organize_rr_icons(self):
+        try:
+            plan=self.pack.organize_rr_icons()
+            if plan.moves or plan.writes or plan.deletes:
+                read_library_background(lambda:self.pack.commit(plan),self,title='Organizing RR Icons')
+                self.reload_view()
+        except Exception as error:self.statusBar().showMessage('RR icon organization: '+str(error))
+
+    def watch_installation(self):
+        watcher=getattr(self,'_installation_watcher',None)
+        if watcher is None:return
+        previous=watcher.files()+watcher.directories()
+        if previous:watcher.removePaths(previous)
+        folders={self.pack.character.parent,self.pack.patches_path.parent,self.pack.character,self.pack.character/'Driver',self.pack.character/'Portrait',self.pack.archive_path.parent,self.pack.patches_path}
+        if self.pack.patches_path.exists():folders.update(p for p in self.pack.patches_path.rglob('*') if p.is_dir() and not p.is_symlink())
+        watched=[str(p) for p in folders if p.is_dir()]
+        watched += [str(p) for p in (self.pack.archive_path,*self.pack.patch_assets.values(),*self.pack.distribution_assets.values()) if p.is_file()]
+        for directory in (self.pack.character/'Driver',self.pack.character/'Portrait'):
+            if directory.is_dir():watched.extend(str(p) for p in directory.iterdir() if p.is_file())
+        if watched:watcher.addPaths(list(dict.fromkeys(watched)))
+
+    def schedule_installation_refresh(self,*args):
+        self._external_refresh_timer.start(1500)
+
+    def refresh_installation_changes(self):
+        if not self.isVisible():return
+        if self.has_staged_changes() or QApplication.activeModalWidget() is not None:
+            self._external_refresh_timer.start(2000);return
+        self.refresh()
+
+    def export_patches(self):
+        parent=QFileDialog.getExistingDirectory(self,'Choose export parent folder')
+        if not parent:return
+        from .patch_export import export
+        import datetime
+        target=Path(parent)/('RR-Patches-'+datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f'))/'Patches'
+        try:
+            read_library_background(lambda:export(self.pack,target),self,title='Exporting Patches')
+            QMessageBox.information(self,'Export complete','Stock SD-compatible patches exported to '+str(target))
+        except Exception as error:QMessageBox.warning(self,'Cannot export patches',str(error))
 
     def export_compatibility_report(self):
         path,_=QFileDialog.getSaveFileName(self,'Export compatibility report','CharacterCompatibility.json','JSON (*.json)')
@@ -1656,6 +1825,8 @@ class MainWindow(QMainWindow):
         branding.addLayout(subline)
         head.addLayout(branding,1)
         head.addWidget(button('+ Import Character',self.import_character,True))
+        self.backup_button=button('Backup Patches',self.create_manual_backup)
+        head.addWidget(self.backup_button)
         head.addWidget(button('Refresh',self.refresh))
         page.addWidget(header)
         workspace=QSplitter(Qt.Orientation.Horizontal)
@@ -1767,6 +1938,7 @@ class MainWindow(QMainWindow):
         self.portrait=EditableImagePreview('Click to add CSS')
         self.portrait.setFixedSize(132,132)
         self.portrait.clicked.connect(self.replace_css_portrait)
+        self.portrait.revertRequested.connect(lambda:self.revert_rr_icon('Portrait'))
         self.portrait.setToolTip('Click anywhere to add or replace the CSS portrait (PNG or TPL)')
         self.portrait.setEditable(False)
         css_col.addWidget(self.portrait)
@@ -1781,8 +1953,11 @@ class MainWindow(QMainWindow):
         self.map_preview.setFixedSize(78,78)
         self.map_preview.move(0, (132 - 78) // 2 + MAP_ICON_VERTICAL_OFFSET)
         self.map_preview.clicked.connect(self.replace_map_icon)
+        self.map_preview.revertRequested.connect(lambda:self.revert_rr_icon('Map'))
         self.map_preview.setToolTip('Click anywhere to add or replace the minimap icon (PNG or TPL)')
         self.map_preview.setEditable(False)
+        self.map_preview.setRevertible(False)
+        self.portrait.setRevertible(False)
         map_col.addWidget(map_canvas)
         preview_row.addLayout(map_col)
         preview_row.addStretch()
@@ -2226,7 +2401,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'Cannot save slots', str(exc));return
         if PreviewDialog(plan, self).exec() != QDialog.DialogCode.Accepted:return
         try:
-            backup = read_library_background(lambda:self.pack.commit(plan),self,title='Saving Character Changes',message='Backing up and applying character resources and UI/Race text…')
+            backup = read_library_background(lambda:self.pack.commit(plan),self,title='Saving Character Changes',message='Applying character resources and UI/Race text…')
         except Exception as exc:
             QMessageBox.critical(self, 'Slot update failed', str(exc));return
         self.pending_patch_slots.clear()
@@ -2236,7 +2411,7 @@ class MainWindow(QMainWindow):
         self.selected_characters = {(code,mapping.get(code,{}).get(slot,slot)) for code,slot in self.selected_characters}
         self.current_slot = mapping.get(self.current_code, {}).get(self.current_slot, self.current_slot)
         self.reload_view()
-        QMessageBox.information(self, 'Slot changes saved', f'Slot changes applied and BMG updated.\n\nBackup: {backup}')
+        QMessageBox.information(self, 'Slot changes saved', 'Slot changes applied and BMG updated.')
 
     def revert_patch_slot_changes(self):
         self.pending_patch_slots.clear()
@@ -2259,9 +2434,11 @@ class MainWindow(QMainWindow):
         self.portrait.setEditable(False)
         self.map_preview.setText('Add map');self.map_preview.setIcon(QIcon())
         self.map_preview.setEditable(False)
+        self.map_preview.setRevertible(False)
+        self.portrait.setRevertible(False)
         self.save_button.setEnabled(False)
         self.patch_move_button.setEnabled(False)
-        self.export_action.setEnabled(False)
+        self.update_selection_status()
 
     def on_selected(self):
         if not self._restoring_selection:
@@ -2287,7 +2464,6 @@ class MainWindow(QMainWindow):
         editable = self.pack.can_edit_skin(self.current_code, slot) and not self.independent_normalize_codes
         self.patch_move_button.setEnabled(not self.pack.developer_mode and self.pack.is_patch_skin(self.current_code, slot))
         self.save_button.setEnabled(editable)
-        self.export_action.setEnabled(True)
         self.name_field.setReadOnly(not editable)
         self.author_field.setReadOnly(not editable)
         permission_tip = ('Edit this skin' if editable else 'Read-only distribution skin. '
@@ -2307,18 +2483,21 @@ class MainWindow(QMainWindow):
             self.resource_list.addItem(item)
         pix=self.skin_image(skin,'Portrait')
         self.portrait.setIcon(QIcon())
-        self.portrait.setEditable(editable)
+        portrait_editable=self.pack.can_replace_portrait(self.current_code,slot) and not self.independent_normalize_codes
+        self.portrait.setEditable(portrait_editable)
+        self.portrait.setRevertible(not self.independent_normalize_codes and self.pack.can_revert_rr_icon(self.current_code,slot,'Portrait'))
+        self.map_preview.setRevertible(not self.independent_normalize_codes and self.pack.can_revert_rr_icon(self.current_code,slot,'Map'))
         if pix is None:
-            self.portrait.setText('Click to add CSS' if editable else 'No CSS')
+            self.portrait.setText('Click to add CSS' if portrait_editable else 'No CSS')
         else:
             self.portrait.setText('')
             self.portrait.setIcon(QIcon(pix))
             self.portrait.setIconSize(QSize(116,116))
         map_pix=self.skin_image(skin,'Map')
         self.map_preview.setIcon(QIcon())
-        self.map_preview.setEditable(editable)
+        self.map_preview.setEditable(portrait_editable)
         if map_pix is None:
-            self.map_preview.setText('Add map' if editable else 'No map')
+            self.map_preview.setText('Add map' if portrait_editable else 'No map')
         else:
             self.map_preview.setText('')
             self.map_preview.setIcon(QIcon(map_pix))
@@ -2466,12 +2645,12 @@ class MainWindow(QMainWindow):
         item=self.table.item(row,0)
         if item is None:return
         self.current_slot=item.data(Qt.ItemDataRole.UserRole)
-        if not self.pack.can_edit_skin(self.current_code, self.current_slot):
+        if not self.pack.can_replace_portrait(self.current_code, self.current_slot):
             return
         self.replace_css_portrait()
 
     def replace_css_portrait(self):
-        if self.current_slot is not None and not self.pack.can_edit_skin(self.current_code, self.current_slot):
+        if self.current_slot is not None and not self.pack.can_replace_portrait(self.current_code, self.current_slot):
             return
         if self.current_slot is None:
             QMessageBox.information(self,'Select a skin','Select an installed skin first.');return
@@ -2484,8 +2663,16 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self,'Cannot import portrait',str(e));return
         self.run_plan(plan)
 
+    def revert_rr_icon(self, kind):
+        if self.current_slot is None:return
+        try:
+            plan=self.pack.revert_rr_icon(self.current_code,self.current_slot,kind)
+        except Exception as e:
+            QMessageBox.warning(self,'Cannot revert icon',str(e));return
+        self.run_plan(plan)
+
     def replace_map_icon(self):
-        if self.current_slot is not None and not self.pack.can_edit_skin(self.current_code, self.current_slot):
+        if self.current_slot is not None and not self.pack.can_replace_portrait(self.current_code, self.current_slot):
             return
         if self.current_slot is None:
             QMessageBox.information(self,'Select a skin','Select an installed skin first.');return
@@ -2544,9 +2731,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self,'No changes','Everything is already up to date.');return
         if PreviewDialog(plan,self).exec()!=QDialog.DialogCode.Accepted:return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        QApplication.processEvents()
         try:
-            backup=self.pack.commit(plan)
+            pack = self.pack
+            backup=read_library_background(lambda:pack.commit(plan), self,
+                title='Applying Character Changes', message='Writing character resources…')
         except Exception as e:
             QApplication.restoreOverrideCursor()
             box=QMessageBox(self);box.setIcon(QMessageBox.Icon.Critical)
@@ -2554,17 +2742,48 @@ class MainWindow(QMainWindow):
             return
         QApplication.restoreOverrideCursor()
         self.reload_view()
-        QMessageBox.information(self,'Saved successfully',f'Changes applied.\n\nBackup location:\n{backup}')
+        QMessageBox.information(self,'Saved successfully','Changes applied.')
 
-    def import_character(self):
+    def import_character(self, source=None):
         if self.has_staged_changes():
             QMessageBox.information(self, 'Unsaved slot changes', 'Save or revert staged slot changes before importing or moving characters.')
             return
+        if isinstance(source,(str,Path)) and Path(source).suffix.lower()=='.mkpack':
+            self.import_character_pack(Path(source));return
         dialog=ImportWizard(self.pack,self.current_code,self)
-        if dialog.exec()==QDialog.DialogCode.Accepted and dialog.plan:
-            self.current_code=dialog.base.currentData()
-            self.current_slot=dialog.slot.value()
-            self.run_plan(dialog.plan)
+        if isinstance(source,(str,Path)):
+            dialog.source.setText(str(source));dialog.probe()
+        try:
+            if dialog.exec()==QDialog.DialogCode.Accepted and dialog.plan:
+                self.current_code=dialog.base.currentData()
+                self.current_slot=dialog.slot.value()
+                self.run_plan(dialog.plan)
+        finally:
+            dialog.plan = None
+            pack_source=getattr(dialog,'pack_source',None)
+            dialog.deleteLater()
+        if pack_source:self.import_character_pack(pack_source)
+
+    def import_character_pack(self, source):
+        if self.has_staged_changes():
+            QMessageBox.information(self,'Unsaved changes','Save or revert staged changes before importing.');return
+        from .mkpack import read_pack
+        try:
+            bundle=read_library_background(lambda:read_pack(source),self,title='Reading Character Pack')
+            summary='\n'.join(f"• {meta['name']} ({meta['base_character'].upper()})" for _,_,meta in bundle.characters)
+            question=QMessageBox(self)
+            question.setWindowTitle('Import Character Pack')
+            question.setText(f'{bundle.name} — {len(bundle.characters)} characters')
+            visible='\n'.join(summary.splitlines()[:8])
+            if len(bundle.characters)>8:visible+=f'\n…and {len(bundle.characters)-8} more (see Details)'
+            question.setInformativeText(visible+'\n\nInstall into available slots? Existing characters will not be overwritten.')
+            question.setDetailedText(summary)
+            question.setStandardButtons(QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)
+            question.setDefaultButton(QMessageBox.StandardButton.No)
+            if question.exec()!=QMessageBox.StandardButton.Yes:return
+            with tempfile.TemporaryDirectory(prefix='rrcm-mkpack-') as directory:
+                self.install_character_packages(bundle.stage(directory))
+        except Exception as error:QMessageBox.warning(self,'Cannot import character pack',str(error))
 
     def mass_import(self):
         """Install independent .mkchara packages into empty slots, one transaction each."""
@@ -2582,9 +2801,12 @@ class MainWindow(QMainWindow):
         destination = 'Character' if self.pack.developer_mode else 'Patches'
         choice = QMessageBox.question(self, 'Mass Import',
             f'Install {len(packages)} .mkchara packages into available {destination} slots?\n'
-            'Each import has its own backup.')
+            'Use Backup Patches before importing if you need a backup.')
         if choice != QMessageBox.StandardButton.Yes:
             return
+        self.install_character_packages(packages)
+
+    def install_character_packages(self, packages):
         self._thumbnail_timer.stop();self._thumbnail_queue.clear()
         progress = MassImportProgress(self.pack, packages, self)
         progress.exec()
@@ -2690,12 +2912,14 @@ class MainWindow(QMainWindow):
             self.selected_characters.clear()
 
     def selected_character_keys(self):
-        return sorted(self.selected_characters)
+        return sorted(self.selected_characters) or [(self.current_code,slot) for slot in self.selected_character_slots()]
 
     def update_selection_status(self):
-        count = len(self.selected_characters)
+        count = len(self.selected_character_keys())
+        self.pack_export_action.setEnabled(count>=2)
+        self.export_action.setEnabled(count>0)
         self.selection_summary.setText(f'{count} selected across sections' if count else '')
-        self.mass_export_action.setEnabled(bool(count))
+        self.mass_export_action.setEnabled(count>=2)
         self.mass_export_action.setText(f'Mass Export (.mkchara)… ({count} selected)' if count else 'Mass Export (.mkchara)…')
 
     def mass_export(self):
@@ -2740,11 +2964,14 @@ class MainWindow(QMainWindow):
             self.table.selectRow(row)
         menu = QMenu(self)
         export = menu.addAction('Export as .mkchara')
+        pack_export=menu.addAction('Export as Character Pack (.mkpack)') if len(self.selected_character_keys())>=2 else None
         delete = menu.addAction('Delete Character')
         delete.setEnabled(all(self.pack.can_edit_skin(*key) for key in self.selected_character_keys()))
         selected = menu.exec(self.table.viewport().mapToGlobal(position))
         if selected == export:
             self.export_character()
+        elif pack_export is not None and selected == pack_export:
+            self.export_character_pack()
         elif selected == delete:
             self.delete_characters()
 
@@ -2763,20 +2990,41 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self,'Cannot delete characters',str(exc))
 
+    def export_character_pack(self):
+        keys=self.selected_character_keys()
+        if len(keys)<2:return
+        if self.has_staged_changes():
+            QMessageBox.information(self,'Unsaved changes','Save or revert staged changes before exporting a pack.');return
+        name,ok=QInputDialog.getText(self,'Export Character Pack','Pack name:')
+        if not ok:return
+        name=name.strip()
+        if not name or len(name)>200:
+            QMessageBox.warning(self,'Invalid pack name','Enter a name of 1–200 characters.');return
+        filename=re.sub(r'[<>:"/\\|?*\x00-\x1f]','_',name).strip(' .') or 'Character Pack'
+        path,_=QFileDialog.getSaveFileName(self,'Export Character Pack',filename+'.mkpack','Character packs (*.mkpack)')
+        if not path:return
+        target=Path(path)
+        if target.suffix.lower()!='.mkpack':target=target.with_suffix('.mkpack')
+        try:
+            from .mkpack import write_pack
+            read_library_background(lambda:write_pack(target,self.pack,keys,name),self,title='Exporting Character Pack')
+            QMessageBox.information(self,'Character pack exported',f'Exported {len(keys)} characters to {target}.')
+        except Exception as error:QMessageBox.warning(self,'Cannot export character pack',str(error))
+
     def export_character(self):
         if self.independent_normalize_codes:
             QMessageBox.information(self, 'Unsaved normalization', 'Save or revert Character slot normalization before editing or exporting characters.')
             return
-        if self.current_slot is None:
-            return
+        keys=self.selected_character_keys()
+        if not keys:return
         try:
             from .mkchara import build_package, write_package
-            keys = self.selected_character_keys()
             if len(keys)>1:
                 self.export_selected(grouped=False)
                 return
-            payload = build_package(self.pack, self.current_code, self.current_slot)
-            skin = self.pack.inventory.skins[self.current_code, self.current_slot]
+            code,slot=keys[0]
+            payload = build_package(self.pack, code, slot)
+            skin = self.pack.inventory.skins[code,slot]
             import re
             filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', skin.name).strip(' .') or 'Character'
             path, _ = QFileDialog.getSaveFileName(self, 'Export Character', filename+'.mkchara',
@@ -2806,7 +3054,9 @@ class MainWindow(QMainWindow):
         self._thumbnail_timer.stop();self._thumbnail_queue.clear()
         try:read_library_background(self.pack.reload,self)
         except Exception as e:QMessageBox.warning(self,'Refresh failed',str(e));return
+        self.organize_rr_icons()
         self.reload_view()
+        self.watch_installation()
 
     def open_pack(self):
         if self.has_staged_changes() and QMessageBox.question(self, 'Unsaved slot changes',
@@ -2816,6 +3066,9 @@ class MainWindow(QMainWindow):
         dialog=OpenPackDialog(self)
         if dialog.exec()==QDialog.DialogCode.Accepted:
             self.pack=dialog.pack
+            self.apply_backup_location()
+            self.organize_rr_icons()
+            self.watch_installation()
             self.pending_patch_slots.clear()
             self.staging_patches = False
             self.pending_organization = False
@@ -2826,11 +3079,10 @@ class MainWindow(QMainWindow):
     
     def about(self):
         QMessageBox.information(self,'About Retro Rewind Character Manager',
-            f'Retro Rewind Character Manager · v{__version__}\n\n'
-            'Manages RR-compatible Character libraries and Patches, ReplacedAssets.szs BMG names, '
-            'slot insertion/reordering, voices, CSS/map TPL icons, .mkchara packages and backups.\n\n'
-            'Not a BRRES model converter. Raw character assets must have a compatible vanilla skeleton. '
-            'Text changes require review; runtime loading still depends on your loader. Textured bind-pose previews do not emulate animation or TEV.')
+            '<b>Retro Rewind Character Manager</b><br><br>'
+            'Manage and customize RR characters, slots, icons, voices, and patches. '
+            'Import, export, and share characters using .mkchara and .mkpack, with backups and previews.')
+
 
 
 def launch():

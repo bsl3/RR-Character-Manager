@@ -14,7 +14,7 @@ import test_mkchara as fixtures
 from wcm.gui import ImportWizard
 from wcm.models import source_entries, discover_models, automatic_driver_candidate, driver_model_role, extract_model_bytes
 from wcm.brrescore import list_models
-from wcm.library import parse_asset, available_import_variants, select_import_entries, preferred_import_code
+from wcm.library import parse_asset, available_import_variants, select_import_entries, preferred_import_code, unused_race_variant
 from wcm.tpl import detected_icons, read_tpl, image_to_tpl
 from wcm.szs import U8Archive
 from wcm.mkchara import build_package, write_package, read_package
@@ -66,11 +66,11 @@ class EntireCollection(unittest.TestCase):
     code=preferred_import_code(n for n,_ in entries)
     choice=automatic_driver_candidate(entries,code=code);self.assertIsNotNone(choice,folder.name)
     self.assertFalse(choice.category.startswith(('Award','Auxiliary')))
-    assets=[(n,a,d) for n,d in entries if (a:=parse_asset(n,source_import=True)) and a.code==code and
+    assets=[(n,a,d) for n,d in entries if not unused_race_variant(n) and (a:=parse_asset(n,source_import=True)) and a.code==code and
             not (a.category=='Driver' and driver_model_role(n,d)[0].startswith('Award'))]
     scoped=[(n,d) for n,d in entries if not ((a:=parse_asset(n,source_import=True)) and a.code!=code)]
     icons=detected_icons(scoped)
-    race_models=[c for c in discover_models(scoped) if c.archive_member=='driver_model.brres']
+    race_models=[c for c in discover_models([(n,d) for n,d in scoped if not unused_race_variant(n)]) if c.archive_member=='driver_model.brres']
     self.assertEqual(len(race_models),sum(a.category=='RaceKart' for _,a,_ in assets))
     for candidate in race_models:self.assertTrue(list_models(extract_model_bytes(scoped,candidate)))
     corrupt=None

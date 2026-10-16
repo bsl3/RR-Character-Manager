@@ -1,12 +1,12 @@
 VSVersionInfo(
-    ffi=FixedFileInfo(filevers=(1, 0, 0, 0), prodvers=(1, 0, 0, 0),
+    ffi=FixedFileInfo(filevers=(1, 1, 0, 0), prodvers=(1, 1, 0, 0),
                       mask=0x3f, flags=0, OS=0x40004, fileType=1, subtype=0, date=(0, 0)),
     kids=[StringFileInfo([StringTable('040904B0', [
         StringStruct('FileDescription', 'RR Character Manager'),
-        StringStruct('FileVersion', '1.0'),
+        StringStruct('FileVersion', '1.1'),
         StringStruct('InternalName', 'RR Character Manager'),
-        StringStruct('OriginalFilename', 'RR character manager 1.0.exe'),
+        StringStruct('OriginalFilename', 'RR character manager.exe'),
         StringStruct('ProductName', 'RR Character Manager'),
-        StringStruct('ProductVersion', '1.0')
+        StringStruct('ProductVersion', '1.1')
     ])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])]
 )

@@ -35,7 +35,8 @@ def safe_path(name):
     return name
 
 
-def zip_members(archive):
+def zip_members(archive, *, max_file=None):
+    if max_file is None:max_file=MAX_FILE
     infos = archive.infolist()
     if len(infos) > MAX_FILES or sum(i.file_size for i in infos) > MAX_TOTAL:
         raise ValueError('Package exceeds 10,000 members or 1 GiB unpacked')
@@ -49,8 +50,8 @@ def zip_members(archive):
         mode = (info.external_attr >> 16) & 0o170000
         if mode not in (0, 0o100000, 0o040000) or info.flag_bits & 1:
             raise ValueError('Links, special files and encrypted ZIP members are unsupported')
-        if info.file_size > MAX_FILE:
-            raise ValueError('A package member exceeds 128 MiB')
+        if info.file_size > max_file:
+            raise ValueError(f'A package member exceeds {max_file // (1024 * 1024)} MiB')
         if not info.is_dir():
             members[name] = info
     return members

@@ -237,7 +237,8 @@ class TestTransactions(unittest.TestCase):
         self.assertIn(dest,plan.replace_existing)
         backup=self.pack.commit(plan)
         self.assertEqual(dest.read_bytes(),new)
-        self.assertTrue(any(x.read_bytes()==old for x in (backup/'files').iterdir()))
+        self.assertTrue((backup/'Patches').is_dir())
+        self.assertFalse(any(x.read_bytes()==old for x in (backup/'Patches').rglob('*') if x.is_file()))
 
     def test_replace_existing_css_tpl_and_back_up_original(self):
         portrait_dir=self.character/'Portrait'
@@ -254,8 +255,8 @@ class TestTransactions(unittest.TestCase):
         self.assertIn('replaced',plan.preview().lower())
         backup=self.pack.commit(plan)
         self.assertEqual(dest.read_bytes(),new)
-        files=list((backup/'files').iterdir())
-        self.assertTrue(any(f.read_bytes()==old for f in files))
+        self.assertTrue((backup/'Patches').is_dir())
+        self.assertFalse(any(f.read_bytes()==old for f in (backup/'Patches').rglob('*') if f.is_file()))
         self.assertEqual(self.pack.replace_portrait('lg',2,source).writes,{})
 
     def test_reject_corrupt_tpl_and_other_slot_write(self):

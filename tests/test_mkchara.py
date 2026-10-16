@@ -66,7 +66,7 @@ class PackageTests(unittest.TestCase):
         self.assertNotIn('slot',exported.character)
         self.assertTrue(all(parse_asset(n,source_import=True).slot is None for n,_ in exported.assets))
         backup=self.pack.commit(self.plan())
-        self.assertTrue((backup/'manifest.json').is_file())
+        self.assertIsNone(backup)
         roundtrip=read_package(io.BytesIO(build_package(self.pack,'wr',12)))
         self.assertEqual(exported.character,roundtrip.character)
         self.assertEqual(dict(exported.assets),dict(roundtrip.assets))
@@ -132,15 +132,15 @@ class PackageTests(unittest.TestCase):
                     self.assertEqual(bmg._lookup(904).raw,'Extra\0'.encode('utf-16-be'))
                     self.assertEqual(bmg._lookup(904).metadata,b'WXYZ')
 
-    def test_base_change_maps_codes_sound_team_suffixes_and_text_ids(self):
+    def test_base_change_maps_codes_sound_and_skips_unused_rr_variants(self):
         plan=self.plan(code='lg')
         self.assertTrue(any('not retargeted' in warning for warning in plan.warnings))
         self.pack.commit(plan)
         names={a.relpath for a in self.pack.inventory.skins['lg',12].files}
         self.assertIn('Sound/GRP_VO_LG-12_CAN_PC.brwsd',names)
         self.assertIn('Sound/10.lg-12.brseq',names)
-        self.assertIn('mdf_bike_blue-lg-12_BT.szs',names)
-        self.assertIn('ma_bike-lg-12_4.szs',names)
+        self.assertNotIn('mdf_bike_blue-lg-12_BT.szs',names)
+        self.assertNotIn('ma_bike-lg-12_4.szs',names)
         exported=read_package(io.BytesIO(build_package(self.pack,'lg',12)))
         self.assertEqual(exported.character['base_character'],'lg')
 

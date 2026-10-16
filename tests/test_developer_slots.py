@@ -74,7 +74,7 @@ class DeveloperSlots(unittest.TestCase):
         w.stage_patch_drop(3, 5); self.save()
         self.check_payload(('wr',3), ('wr',5)); self.check_payload(('wr',5), ('wr',3))
         self.check_payload(('lg',6), ('lg',6))
-        self.assertTrue(list((self.pack.character.parent/'RR Character Manager Backups').glob('*/manifest.json')))
+        self.assertFalse(list(self.pack.backup_root.glob('*/manifest.json')))
 
     def test_bump_and_normalize_follow_staged_order_and_save_across_sections(self):
         w = self.window

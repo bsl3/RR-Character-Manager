@@ -48,7 +48,7 @@ def check_dependencies():
 
 def package(output, target, binary=None):
     tag = 'RRCharacterManager-v' + __version__ + '-' + target
-    name = 'RR character manager ' + __version__
+    name = 'RR character manager' if sys.platform == 'win32' else 'RR character manager ' + __version__
     if binary is None:
         if sys.platform == 'win32':
             binary = ROOT/'dist'/(name+'.exe')
@@ -106,7 +106,7 @@ def main(argv=None):
             from PIL import Image
             with Image.open(ROOT/'full-motorcycle-helmet.png') as icon:icon.save(build/'release-icon.icns',format='ICNS')
         subprocess.run(build_command(),cwd=ROOT,env=build_environment(),check=True)
-        name = 'RR character manager '+__version__
+        name = 'RR character manager' if sys.platform == 'win32' else 'RR character manager '+__version__
         executable = ROOT/'dist'/(name+'.exe') if sys.platform=='win32' else ROOT/'dist'/name/name
         if sys.platform=='darwin':executable=ROOT/'dist/RR Character Manager.app/Contents/MacOS'/name
         env = os.environ.copy();env['QT_QPA_PLATFORM']='offscreen'

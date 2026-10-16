@@ -9,3 +9,5 @@ validation/
 .venv-release/
 release/
 build-comparison/
+
+/tests/

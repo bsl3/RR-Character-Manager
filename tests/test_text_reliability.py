@@ -82,7 +82,7 @@ class TextReliability(unittest.TestCase):
         self.assertIn("'Race'",plan.preview());self.assertIn("'UI'",plan.preview())
         before={p:p.read_bytes() for p in (ui,race,root,other)}
         self.assertEqual(before,{p:p.read_bytes() for p in before},'plan generation changed files')
-        backup=self.pack.commit(plan);self.assertTrue((backup/'manifest.json').is_file())
+        backup=self.pack.commit(plan);self.assertIsNone(backup)
         table=self.pair()
         for id_,text in {42:'UI',50:'Only UI',51:'Only Race',52:'Legacy',53:'Private text',902:'Other text'}.items():
             self.assertEqual(table.get_text(id_),text)

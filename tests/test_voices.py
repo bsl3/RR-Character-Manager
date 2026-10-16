@@ -98,7 +98,7 @@ class VoiceTests(unittest.TestCase):
                 session.revert();self.assertFalse(session.pending)
                 session.replace('PC.brwsd',0,raw,'replacement.wav');plan=session.plan()
                 self.assertTrue(all(p.is_relative_to(pack.character if developer else pack.patches_path) for p in plan.writes))
-                backup=pack.commit(plan);self.assertTrue((backup/'manifest.json').is_file())
+                backup=pack.commit(plan);self.assertIsNone(backup)
                 reloaded=VoiceSession(pack,'ys',4,VANILLA)
                 self.assertEqual(reloaded.state('PC.brwsd',0),'Replaced');self.assertEqual(reloaded.state('PC.brwsd',1),'Original')
                 reloaded.restore('PC.brwsd',0);pack.commit(reloaded.plan())

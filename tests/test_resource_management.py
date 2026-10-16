@@ -132,7 +132,7 @@ class ResourceManagement(unittest.TestCase):
         self.assertEqual(len(plan.deletes), 2)
         self.assertTrue(all(p in plan.writes for p in pack._patch_name_archives()))
         backup = pack.commit(plan)
-        self.assertTrue(backup.is_dir())
+        self.assertIsNone(backup)
         self.assertTrue((self.patches / 'Custom Luigi/lg-8.brres').is_file())
         self.assertTrue((self.patches / 'Custom Luigi/ma_kart-lg-8.szs').is_file())
         self.assertTrue((self.patches / 'Custom Luigi/_rr_character.json').is_file())

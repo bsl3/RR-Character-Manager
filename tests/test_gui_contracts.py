@@ -71,5 +71,5 @@ class TestModeGUIContracts(unittest.TestCase):
         self.assertIn('self.move_button.setVisible(self.pack.developer_mode)', src)
         self.assertIn('editable = self.pack.can_edit_skin(self.current_code, slot)', src)
         self.assertIn('self.save_button.setEnabled(editable)', src)
-        self.assertIn('self.portrait.setEditable(editable)', src)
-        self.assertIn('self.map_preview.setEditable(editable)', src)
+        self.assertIn('self.portrait.setEditable(portrait_editable)', src)
+        self.assertIn('self.map_preview.setEditable(portrait_editable)', src)

@@ -15,7 +15,7 @@ class ResourceActions(unittest.TestCase):
         self.addCleanup(self.fixture.doCleanups)
         self.pack = self.fixture.pack
 
-    def test_patch_icon_delete_backs_up_and_preserves_other_assets(self):
+    def test_manual_backup_before_icon_delete_preserves_other_assets(self):
         asset = next(a for a in self.pack.inventory.skins['wr', 7].files if a.category == 'Portrait')
         original_path = self.pack.asset_path(asset.relpath)
         original = original_path.read_bytes()
@@ -23,12 +23,14 @@ class ResourceActions(unittest.TestCase):
         model_path = self.pack.asset_path(model.relpath)
         plan = self.pack.delete_resource('wr', 7, asset.relpath)
         self.assertIn(original_path, plan.deletes)
-        backup = self.pack.commit(plan)
+        from wcm.backups import snapshot
+        backup = snapshot(self.pack.patches_path,self.pack.backup_root,'Manual backup')
+        self.assertIsNone(self.pack.commit(plan))
         self.assertFalse(original_path.exists())
         self.assertTrue(model_path.exists())
         self.assertTrue((backup/'manifest.json').exists())
         self.assertNotIn('Portrait', [a.category for a in self.pack.inventory.skins['wr', 7].files])
-        self.assertIn(original, [p.read_bytes() for p in (backup/'files').iterdir()])
+        self.assertEqual((backup/'Patches'/original_path.relative_to(self.pack.patches_path)).read_bytes(),original)
 
     def test_original_asset_delete_protected_unless_developer(self):
         f = self.fixture

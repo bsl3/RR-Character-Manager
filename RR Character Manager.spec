@@ -7,7 +7,7 @@ from wcm import __version__
 root = Path(SPECPATH)
 windows = sys.platform == 'win32'
 macos = sys.platform == 'darwin'
-name = 'RR character manager ' + __version__
+name = 'RR character manager' if windows else 'RR character manager ' + __version__
 
 # The app uses Widgets, OpenGL and audio, but not QML, video widgets or PDF.
 excludes = [

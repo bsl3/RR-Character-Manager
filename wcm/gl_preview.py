@@ -91,9 +91,12 @@ class GLPreview(QOpenGLWidget):
     def fallback(self,exc):
         if self.failed: return
         self.failed=True
-        QTimer.singleShot(0,lambda:self.owner._software_fallback(str(exc)))
+        reason = str(exc)
+        QTimer.singleShot(0,self.owner,lambda:self.owner._software_fallback(reason) if not self.owner._disposed else None)
 
     def release_resources(self):
+        if self.context() is None:
+            return
         self.makeCurrent()
         for buffer,edges,texture,_,_,_,_ in self.groups:
             buffer.destroy();edges.destroy()

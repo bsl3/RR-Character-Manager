@@ -43,12 +43,15 @@ def source_entries(source: Path) -> list[tuple[str, bytes]]:
         return read_package(source).preview_entries()
     if source.is_dir():
         result = []
+        total = 0
         for file in source.rglob('*'):
             if file.is_symlink():
                 continue
             if file.is_file():
-                if file.stat().st_size > MAX_MODEL_SOURCE_BYTES:
-                    continue
+                size = file.stat().st_size
+                total += size
+                if size > MAX_MODEL_SOURCE_BYTES or total > 1024*1024*1024 or len(result) >= 10000:
+                    raise ValueError('Mod folder exceeds import size or file-count limits')
                 result.append((file.relative_to(source).as_posix(), file.read_bytes()))
         return result
     if source.suffix.lower() == '.zip':

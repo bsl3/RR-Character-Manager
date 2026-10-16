@@ -110,7 +110,7 @@ class IncrementalImport(unittest.TestCase):
     plan=method(f.package,'lg',slot,name=f'Imported {slot}',author='Author',**kwargs)
     with patch.object(pack,'reload',wraps=pack.reload) as reload:
      backup=pack.commit(plan,imported_character=('lg',slot));reload.assert_not_called()
-    self.assertTrue((backup/'manifest.json').is_file())
+    self.assertIsNone(backup)
     before={(key): (s.name,s.author,[a.relpath for a in s.files]) for key,s in pack.inventory.skins.items()}
     snapshot=dict(pack._snapshot);bmg=pack.bmg.encode();count=pack.inventory.scanned_file_count
     pack.reload()

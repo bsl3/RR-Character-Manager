@@ -273,3 +273,12 @@ def missing_race_requests(code,coverage):
     prefix=('s','m','l')[group]
     stems={prefix+vehicle+'_'+kind+':standard' for vehicle in ('a','b','c','d','df','e') for kind in ('kart','bike')}
     return {mode:sorted(stems-set(coverage.get(mode,[]))) for mode in ('normal','2','4')}
+
+
+def unused_race_variant(relative):
+    """Skip team/battle and split-screen vehicle variants during import."""
+    asset = parse_asset(relative, source_import=True)
+    if asset is None or asset.category != 'RaceKart':
+        return False
+    name = PurePosixPath(relative.replace('\\', '/')).name.lower()
+    return bool(re.search(r'_(?:red|blue)-', name) or name.endswith(('_bt.szs', '_2.szs', '_4.szs')))

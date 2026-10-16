@@ -41,15 +41,15 @@ class TestBikerWarioImport(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'alternative installation variants'):
             self.pack.import_patch_skin(BIKER, 'wr', 7, name='Biker Wario', author='Porko')
 
-    def test_full_slot_zip_installs_every_supported_asset(self):
+    def test_full_slot_zip_installs_rr_assets_without_split_screen_variants(self):
         plan = self.pack.import_patch_skin(BIKER, 'wr', 7, name='Biker Wario', author='Porko',
                                            source_variant=FULL)
-        self.assertEqual(len(plan.writes), 41)  # assets/icons/text/manifest plus preserved source-only resources
         names = {p.name for p in plan.writes}
         for name in ('wr-7-allkart.szs', 'wr-7-allkart_BT.szs', 'wr-7.brres',
-                     'ldf_bike-wr-7_4.szs', 'ldf_kart-wr-7_4.szs',
                      'wr-7-css.tpl', 'wr-7.tpl'):
             self.assertIn(name, names)
+        self.assertNotIn('ldf_bike-wr-7_4.szs', names)
+        self.assertNotIn('ldf_kart-wr-7_4.szs', names)
         self.assertEqual(read_tpl(plan.writes[self.pack.patches_path / 'Biker Wario' / 'wr-7-css.tpl']).size, (64, 64))
         self.assertEqual(read_tpl(plan.writes[self.pack.patches_path / 'Biker Wario' / 'wr-7.tpl']).size, (32, 32))
         self.assertEqual(sum(p.suffix == '.brres' for p in plan.writes), 1)

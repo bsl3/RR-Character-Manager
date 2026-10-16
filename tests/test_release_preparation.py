@@ -12,14 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ReleasePreparation(unittest.TestCase):
     def test_release_version_and_windows_metadata(self):
-        self.assertEqual(__version__, '1.0')
-        self.assertEqual(version(__version__), (1, 0, 0))
-        self.assertGreater(version('v1.0.1'), version(__version__))
+        self.assertEqual(__version__, '1.1')
+        self.assertEqual(version(__version__), (1, 1, 0))
+        self.assertGreater(version('v1.1.1'), version(__version__))
         if sys.platform != 'win32' or importlib.util.find_spec('PyInstaller') is None:
             self.skipTest('PyInstaller is only needed for packaging checks')
         from PyInstaller.utils.win32.versioninfo import load_version_info_from_text_file
         info = load_version_info_from_text_file(str(ROOT / 'tools/windows_version.txt'))
-        self.assertEqual((info.ffi.fileVersionMS, info.ffi.fileVersionLS), (1 << 16, 0))
+        self.assertEqual((info.ffi.fileVersionMS, info.ffi.fileVersionLS), ((1 << 16) | 1, 0))
         spec = (ROOT / 'RR Character Manager.spec').read_text(encoding='utf-8')
         self.assertIn('from wcm import __version__', spec)
         self.assertNotIn('C:/Users/', spec)

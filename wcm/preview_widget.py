@@ -11,6 +11,7 @@ from PySide6.QtGui import QImage, QColor, QBrush, QPainter, QPen, QPolygonF, QGu
 from PySide6.QtWidgets import QWidget
 from .preview3d import PreviewMesh
 from .raster import render_mesh
+from threading import Event
 from concurrent.futures import ThreadPoolExecutor
 _RENDER_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rrcm-raster")
 
@@ -22,6 +23,8 @@ class MeshPreviewWidget(QWidget):
         self.setMinimumSize(330, 275)
         self.setMouseTracking(True)
         self.setToolTip('Left-drag to orbit · Mouse wheel to zoom · Double-click to reset')
+        self._cancel_render = Event()
+        self._disposed = False
         self._frame = None
         self._render_key = None
         self._future = None
@@ -63,6 +66,8 @@ class MeshPreviewWidget(QWidget):
         self.update()
 
     def set_mesh(self, mesh: PreviewMesh | None):
+        self._cancel_render.set()
+        self._cancel_render = Event()
         self.mesh = mesh
         self._frame = None
         self._generation += 1
@@ -145,7 +150,23 @@ class MeshPreviewWidget(QWidget):
         self._generation += 1
         super().hideEvent(event)
 
+    def dispose(self):
+        if self._disposed:
+            return
+        self._disposed = True
+        self._poll.stop()
+        self._cancel_render.set()
+        if self._future is not None:
+            self._future.cancel()
+            self._future = None
+        if self._gl is not None:
+            self._gl.release_resources()
+        self.mesh = None
+        self._frame = None
+
     def _poll_render(self):
+        if self._disposed:
+            return
         if self._gl is not None:
             if self.isVisible() and not self._gl.isValid():
                 self._software_fallback('OpenGL context unavailable')
@@ -171,9 +192,10 @@ class MeshPreviewWidget(QWidget):
             key = self._requested_key
             mesh = self.mesh
             factor = min(1.,240/max(self.width(),self.height())) if self._last is not None else 1.
+            cancelled = self._cancel_render
             self._future = _RENDER_POOL.submit(render_mesh, mesh, self.width()*factor, self.height()*factor,
                 self.yaw, self.pitch, self.zoom, self.wireframe,
-                lambda: self.mesh is not mesh)
+                cancelled.is_set)
 
     def paintEvent(self, event):
         painter = QPainter(self)
